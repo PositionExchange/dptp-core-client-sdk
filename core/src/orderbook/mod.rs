@@ -2,12 +2,45 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::collections::BTreeMap;
 
+// use wasm_bindgen::prelude::*;
+
+
 type PriceLevel = (Decimal, Decimal);
+//
+// #[wasm_bindgen]
+// extern "C" {
+//     #[wasm_bindgen(js_namespace = console)]
+//     fn log(s: &str);
+// }
+
+// #[cfg(not(target_arch = "wasm32"))]
+// fn console_log(s: String) {
+//     unsafe {
+//         println!("{}", s);
+//     }
+// }
+//
+// #[cfg(target_arch = "wasm32")]
+// fn console_log(s: String) {
+//     unsafe {
+//         log(s.as_str())
+//     }
+// }
 
 #[derive(Debug, PartialEq)]
 pub struct OrderBook {
-    asks: BTreeMap<Decimal, Decimal>,
-    bids: BTreeMap<Decimal, Decimal>,
+    pub asks: BTreeMap<Decimal, Decimal>,
+    pub bids: BTreeMap<Decimal, Decimal>,
+}
+
+pub trait OrderbookLog {
+    fn log(msg: &String);
+}
+
+impl OrderbookLog for OrderBook {
+    fn log(msg: &String) {
+        println!("orderbook {}", msg);
+    }
 }
 
 impl OrderBook {
@@ -47,14 +80,22 @@ impl OrderBook {
     }
 
 
+    
     pub fn compute_dry(&self, fill_amount: Decimal, fill_by_quote: bool, is_buy: bool) -> (Decimal, Decimal, Decimal) {
         // Select asks or bids based on the is_buy flag
-        let order_map = if is_buy { &self.bids } else { &self.asks };
+        let fill_map = if is_buy { &self.asks } else { &self.bids };
         let mut remaining_amount = fill_amount;
         let mut total_quote = Decimal::new(0, 0);
         let mut total_base = Decimal::new(0, 0);
+        let iter: Box<dyn Iterator<Item = _>> = if is_buy {
+            Box::new(fill_map.iter())
+        } else {
+            // reverse the order list if it is a sell order
+            // because BTreeMap is sorted in ascending order
+            Box::new(fill_map.iter().rev())
+        };
 
-        for (price, quantity) in order_map.iter() {
+        for (price, quantity) in iter {
             let available_amount = if fill_by_quote { *quantity * *price } else { *quantity };
             if remaining_amount >= available_amount {
                 remaining_amount -= available_amount;
@@ -66,8 +107,9 @@ impl OrderBook {
                 } else {
                     remaining_amount
                 };
-                total_quote += *quantity * *price;
+                total_quote += remaining_quantity * *price;
                 total_base += remaining_quantity;
+                remaining_amount = Decimal::ZERO;
                 break;
             }
             if remaining_amount.is_zero() {
@@ -76,18 +118,18 @@ impl OrderBook {
         }
 
         if !remaining_amount.is_zero() {
-            return (Decimal::new(0, 0), Decimal::new(0, 0), Decimal::new(0, 0));
+            return (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO);
         }
 
         let avg_price = total_quote / total_base;
         let (best_ask, best_bid) = self.get_best_ask_bid();
         let slippage = if is_buy {
-            (avg_price - best_bid.unwrap()) / best_bid.unwrap() * Decimal::new(100, 0)
+            ((avg_price - best_ask.unwrap()) / best_ask.unwrap()) * Decimal::new(100, 0)
         } else {
-            (best_ask.unwrap() - avg_price) / avg_price * Decimal::new(100, 0)
+            ((best_bid.unwrap() - avg_price) / best_bid.unwrap()) * Decimal::new(100, 0)
         };
 
-        (avg_price, total_base, slippage)
+        (avg_price.round_dp(9), total_base.round_dp(9), slippage.round_dp(9))
     }
 
      pub fn get_depth(&self) -> (Vec<PriceLevel>, Vec<PriceLevel>) {
@@ -321,7 +363,7 @@ mod tests_dry_compute {
         let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(4), false, true);
         assert_eq!(avg_price, dec!(1.15));
         assert_eq!(filled_qty, dec!(4.0));
-        assert_eq!(slippage, dec!(0.0375));
+        assert_eq!(slippage, dec!(15));
     }
 
     #[test]
@@ -332,10 +374,10 @@ mod tests_dry_compute {
             vec![],
         );
 
-        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(3), false, true);
-        assert_eq!(avg_price, dec!(1.1));
-        assert_eq!(filled_qty, dec!(3.0));
-        assert_eq!(slippage, dec!(0.02777777));
+        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(2), false, true);
+        assert_eq!(avg_price, dec!(1.05));
+        assert_eq!(filled_qty, dec!(2.0));
+        assert_eq!(slippage, dec!(5));
     }
 
     #[test]
@@ -346,10 +388,10 @@ mod tests_dry_compute {
             vec![],
         );
 
-        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(3), true, false);
-        assert_eq!(avg_price, dec!(1.033333));
-        assert_eq!(filled_qty, dec!(2.9));
-        assert_eq!(slippage, dec!(0.01111111));
+        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(3), true, true);
+        assert_eq!(avg_price, dec!(1.090909091));
+        assert_eq!(filled_qty, dec!(2.75));
+        assert_eq!(slippage, dec!(9.090909091));
     }
 
     #[test]
@@ -360,10 +402,10 @@ mod tests_dry_compute {
             vec![],
         );
 
-        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(1.5), true, false);
-        assert_eq!(avg_price, dec!(1.0));
-        assert_eq!(filled_qty, dec!(1.5));
-        assert_eq!(slippage, dec!(0.0));
+        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(1.5), true, true);
+        assert_eq!(avg_price, dec!(1.03125));
+        assert_eq!(filled_qty, dec!(1.454545455));
+        assert_eq!(slippage, dec!(3.125));
     }
 
     #[test]
@@ -374,10 +416,10 @@ mod tests_dry_compute {
             vec![(dec!(0.9), dec!(1)), (dec!(0.8), dec!(1)), (dec!(0.7), dec!(1)), (dec!(0.6), dec!(1))],
         );
 
-        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(4), false, true);
+        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(4), false, false);
         assert_eq!(avg_price, dec!(0.75));
         assert_eq!(filled_qty, dec!(4.0));
-        assert_eq!(slippage, dec!(0.0375));
+        assert_eq!(slippage, dec!(16.666666667));
     }
 
     #[test]
@@ -388,10 +430,10 @@ mod tests_dry_compute {
             vec![(dec!(0.9), dec!(1)), (dec!(0.8), dec!(1)), (dec!(0.7), dec!(1)), (dec!(0.6), dec!(1))],
         );
 
-        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(2), false, true);
+        let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(2), false, false);
         assert_eq!(avg_price, dec!(0.85));
         assert_eq!(filled_qty, dec!(2.0));
-        assert_eq!(slippage, dec!(0.02777777));
+        assert_eq!(slippage, dec!(5.555555556));
     }
 
     #[test]
@@ -405,7 +447,7 @@ mod tests_dry_compute {
         let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(3), true, false);
         assert_eq!(avg_price, dec!(0.75));
         assert_eq!(filled_qty, dec!(4.0));
-        assert_eq!(slippage, dec!(0.0375));
+        assert_eq!(slippage, dec!(16.666666667));
     }
 
     #[test]
@@ -417,8 +459,8 @@ mod tests_dry_compute {
         );
 
         let (avg_price, filled_qty, slippage) = orderbook.compute_dry(dec!(1.5), true, false);
-        assert_eq!(avg_price, dec!(0.85));
-        assert_eq!(filled_qty, dec!(2.0));
-        assert_eq!(slippage, dec!(0.02777777));
+        assert_eq!(avg_price, dec!(0.857142857));
+        assert_eq!(filled_qty, dec!(1.75));
+        assert_eq!(slippage, dec!(4.761904762));
     }
 }

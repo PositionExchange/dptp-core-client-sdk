@@ -80,11 +80,6 @@ impl OrderBookManager {
         //     slippage: slippage.to_string(),
         // };
         let result = (avg_price.to_string(), total_base.to_string(), slippage.to_string());
-        log(format!("price: {}", avg_price.to_string()).as_str());
-        log(format!("total_base: {}", total_base.to_string()).as_str());
-        log(format!("slippage: {}", slippage.to_string()).as_str());
-        log(format!("result: {:?}", result).as_str());
-
 
         to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -176,3 +171,4 @@ fn to_vec_tuple(arr: &Array) -> Vec<(String, String)> {
     result
 }
     
+
