@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 # external = { path = "../external" }
 core = { path = "../core" }
 serde_json = "1.0.64"
-wasm-bindgen = {version = "0.2.78", features = ["serde-serialize"]}
+wasm-bindgen = { version = "0.2.84", features = ["serde-serialize"] }
 wasm-bindgen-futures = "0.4.24"
 rust_decimal = "1.15.0"
 rust_decimal_macros = "1.15.0"

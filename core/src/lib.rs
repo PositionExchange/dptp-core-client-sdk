@@ -1,4 +1,5 @@
 pub mod orderbook;
+pub mod compute;
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right

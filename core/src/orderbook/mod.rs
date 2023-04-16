@@ -117,7 +117,7 @@ impl OrderBook {
             }
         }
 
-        if !remaining_amount.is_zero() {
+        if !remaining_amount.is_zero() || total_base.is_zero() {
             return (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO);
         }
 

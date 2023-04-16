@@ -2,10 +2,13 @@ use serde::{ser::SerializeTuple, Serialize};
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
 use core::orderbook::OrderBook;
+use std::collections::HashMap;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use console_error_panic_hook::set_once;
 use js_sys::Array;
+
+mod order;
 
 #[wasm_bindgen]
 extern "C" {
@@ -24,6 +27,7 @@ type PriceLevel = (Decimal, Decimal);
 #[wasm_bindgen]
 pub struct OrderBookManager {
     orderbook: OrderBook,
+    order_manager: order::OrderManager
 }
 
 #[wasm_bindgen]
@@ -32,6 +36,7 @@ impl OrderBookManager {
     pub fn new() -> Self {
         Self {
             orderbook: OrderBook::new(),
+            order_manager: order::OrderManager::new(),
         }
     }
 
@@ -61,7 +66,15 @@ impl OrderBookManager {
     }
 
     
+    /// Compute the average price, total base amount, slippage for a given fill amount
+    ///
+    /// # Returns
+    /// * `avg_price`: average price of the fill
+    /// * `total_base`: total base amount of the fill
+    /// * `slippage`: slippage of the fill in 100%, 10 = 10%
+    /// @returns {Array} [avg_price: string, total_base: string, slippage: string]
     #[wasm_bindgen]
+    #[doc = "Compute the average price, total base amount, slippage for a given fill amount"]
     pub fn compute_dry(
         &self,
         fill_amount: String,
@@ -80,7 +93,6 @@ impl OrderBookManager {
         //     slippage: slippage.to_string(),
         // };
         let result = (avg_price.to_string(), total_base.to_string(), slippage.to_string());
-
         to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -131,6 +143,69 @@ impl OrderBookManager {
         // ((JsValue::from_serde(&asks_js).unwrap(), JsValue::from_serde(&bids_js).unwrap()))
         let result = (asks_js, bids_js);
         to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
+    pub fn update_balance(&mut self, token: String, balance: String) {
+        self.order_manager.update_balance(token, balance);
+    }
+
+    #[wasm_bindgen]
+    pub fn new_pair_order_compute(
+        &mut self,
+        pair_symbol: String,
+        collateral_long_token: String,
+        collateral_short_token: String,
+        leverage: String,
+        max_notional: String,
+        min_quantity_base: String,
+        margin_ratio: String,
+        taker_fee: String,
+        maker_fee: String
+
+    ) {
+        self.order_manager.new_pair_order_compute(pair_symbol, collateral_long_token, collateral_short_token, leverage, max_notional, min_quantity_base, margin_ratio, taker_fee, maker_fee)
+    }
+
+    /// Returns an object containing trading-related information.
+    ///
+    /// # Returns
+    ///
+    /// `cost_long`: String - The cost for a long position.
+    /// `cost_short`: String - The cost for a short position.
+    /// `entry_price`: String - The entry price for the trade.
+    /// `fees`: String - The fees associated with the trade.
+    /// `liquidation_price`: String - The liquidation price for the position.
+    /// `max_quantity_base`: String - The maximum base quantity allowed for the trade.
+    /// `max_quantity_quote`: String - The maximum quote quantity allowed for the trade.
+    /// `min_quantity_base`: String - The minimum base quantity allowed for the trade.
+    /// `min_quantity_quote`: String - The minimum quote quantity allowed for the trade.
+    /// `slippage`: String - The slippage percentage.
+    /// `swap_fee`: String - The swap fee for the trade.
+    ///  @returns {{
+    ///   cost_long: string,
+    ///   cost_short: string,
+    ///   entry_price: string,
+    ///   fees: string,
+    ///   liquidation_price: string,
+    ///   max_quantity_base: string,
+    ///   max_quantity_quote: string,
+    ///   min_quantity_base: string,
+    ///   min_quantity_quote: string,
+    ///   slippage: string,
+    ///   swap_fee: string
+    /// }}
+    #[wasm_bindgen]
+    pub fn compute_open_order(
+        &self,
+        pay_token: String,
+        limit_price: Option<String>,
+        quantity: String,
+        is_quote: bool,
+        is_buy: bool,
+        use_percentage: bool,
+    ) -> JsValue {
+        self.order_manager.compute_open_order(&self.orderbook, pay_token, limit_price, quantity, is_quote, is_buy, use_percentage)
     }
 
 }
