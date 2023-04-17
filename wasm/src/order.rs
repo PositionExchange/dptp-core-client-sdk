@@ -4,6 +4,11 @@ use std::{collections::HashMap};
 use rust_decimal::Decimal;
 use wasm_bindgen::prelude::*;
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+}
 
 pub struct OrderManager {
     user_balance: HashMap<String, Decimal>,
@@ -58,6 +63,7 @@ impl OrderManager {
         is_buy: bool,
         use_percentage: bool,
     ) -> JsValue {
+        log(format!("Compute open order: {:?}, is_quote {}, is_buy {}", quantity, is_quote, is_buy).as_str());
         let order_type;
         let mut price: Option<Decimal> = None;
         match limit_price {
@@ -72,7 +78,7 @@ impl OrderManager {
         let result = self.get_active_order_compute().compute_open_order(
             order_type,
             orderbook,
-            *self.user_balance.get(&pay_token).clone().expect("no balance"),
+            *self.user_balance.get(&pay_token).clone().unwrap_or_else(|| &Decimal::ZERO),
             pay_token,
             order::string_to_decimal(&quantity, "Invalid quantity"),
             price,
@@ -80,6 +86,7 @@ impl OrderManager {
             is_buy,
             use_percentage
         );
+        log(format!("raw result {:?}", result).as_str());
 
          serde_wasm_bindgen::to_value(&result).unwrap()
     }

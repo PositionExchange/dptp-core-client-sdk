@@ -205,6 +205,7 @@ impl OrderBookManager {
         is_buy: bool,
         use_percentage: bool,
     ) -> JsValue {
+        log("Rust >> compute order");
         self.order_manager.compute_open_order(&self.orderbook, pay_token, limit_price, quantity, is_quote, is_buy, use_percentage)
     }
 

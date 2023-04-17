@@ -6,6 +6,7 @@ use serde::{Serialize, Deserialize};
 
 /// Calculate max quantity, min quantity, entry_price, liquidation_price, fees and slippage for a given order
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum OrderType {
     Limit,
     Market,
@@ -24,6 +25,8 @@ pub struct FuturesOrder {
     pub slippage: Decimal,
     pub cost_long: Decimal,
     pub cost_short: Decimal,
+    pub open_quantity: Decimal,
+    pub open_notional: Decimal,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -84,6 +87,8 @@ impl FuturesOrderCalculation {
         assert!(!String::is_empty(&self.collateral_long_token), "Long collateral token not set. Must init new pare first");
         assert!(!String::is_empty(&self.collateral_short_token), "Short collateral token not set. Must init new pare first");
 
+        println!("order book {:?}", order_book);
+
         let zero = Decimal::ZERO;
         // let balance = self.account_balance.get(&pay_token).unwrap_or(&zero);
         // TODO Convert balance to quote balance
@@ -96,15 +101,17 @@ impl FuturesOrderCalculation {
             quantity
         };
 
+        println!("calculating {} {} {}", quantity, is_quote, is_buy);
         let (entry_price, total_base_filled, slippage) = match order_type {
             OrderType::Market => order_book.compute_dry(quantity, is_quote, is_buy),
             OrderType::Limit => {
                 // For limit orders, use the provided quantity and slippage
-                (limit_price.unwrap(), quantity, dec!(0))
+                (limit_price.unwrap(), if is_quote {quantity / limit_price.unwrap()} else {quantity}, dec!(0))
             }
         };
 
         if entry_price.is_zero() || total_base_filled.is_zero() {
+            println!("Entry price or total base filled is zero entry_price: {}, total_base_filled: {}", entry_price, total_base_filled);
             return FuturesOrder {
                 entry_price: Decimal::ZERO,
                 liquidation_price: Decimal::ZERO,
@@ -117,6 +124,9 @@ impl FuturesOrderCalculation {
                 slippage: Decimal::ZERO,
                 cost_long: Decimal::ZERO,
                 cost_short: Decimal::ZERO,
+                open_quantity: Decimal::ZERO,
+                open_notional: Decimal::ZERO,
+            
             };
         }
 
@@ -127,24 +137,28 @@ impl FuturesOrderCalculation {
             OrderType::Market => self.taker_fee,
         };
 
-        let open_fee = open_fees_rate * entry_price;
+        let open_fee = open_fees_rate * open_notional;
 
 
         let swap_fee = dec!(0); // TODO: Calculate swap fee
 
         let max_balance = quote_balance * (dec!(1) - open_fees_rate);
 
-        let initial_margin = self.compute_margin(quantity, entry_price);
+        let initial_margin = self.compute_margin(total_base_filled, entry_price);
         let maintenance_margin = initial_margin * self.margin_ratio;
-
+        println!("initial_margin: {}, maintenance_margin: {}, quantity: {}, total_base_filled: {}", initial_margin, maintenance_margin, quantity, total_base_filled);
         let liquidation_price = match is_buy {
-            true => (maintenance_margin - initial_margin + open_notional) / quantity,
-            false => (open_notional - maintenance_margin + initial_margin) / quantity,
+            true => (maintenance_margin - initial_margin + open_notional) / total_base_filled,
+            false => (open_notional - maintenance_margin + initial_margin) / total_base_filled,
         };
 
         // Calculate min, max
         // Max = min (max_notional / entry_price, max_balance * leverage / entry_price)
-        let max_quantity_base = (self.max_notional / entry_price).min(max_balance * self.leverage / entry_price);
+        let max_quantity_base = if max_balance > zero {
+            (self.max_notional / entry_price).min(max_balance * self.leverage / entry_price)
+        }else {
+            self.max_notional / entry_price
+        };
 
         // Min = min_quantity
         let min_quantity_base = self.min_quantity_base;
@@ -168,6 +182,8 @@ impl FuturesOrderCalculation {
             slippage,
             cost_long,
             cost_short,
+            open_notional,
+            open_quantity: total_base_filled
         }
     }
 
@@ -225,7 +241,7 @@ mod tests {
             collateral_short_token: "USDT".to_string(),
             max_notional: dec!(50000),
             min_quantity_base: dec!(0.001),
-            margin_ratio: dec!(0.5),
+            margin_ratio: dec!(0.03),
             taker_fee: dec!(0.001),
             maker_fee: dec!(0.0005),
         }
@@ -237,7 +253,7 @@ mod tests {
         let futures_order_calculation = setup_futures_order_calculation();
         let account_balance = setup_account_balance();
 
-        let order = futures_order_calculation.compute_open_order(
+        let result = futures_order_calculation.compute_open_order(
             OrderType::Market,
             &order_book,
             account_balance.get("USDT").unwrap().clone(),
@@ -246,10 +262,20 @@ mod tests {
             None,
             false,
             true,
-            true,
+            false,
         );
 
-        assert_eq!(order.entry_price, dec!(10000));
+        assert_eq!(result.entry_price, dec!(10000));
+        assert_eq!(result.liquidation_price, dec!(9030));
+        assert_eq!(result.max_quantity_quote, dec!(9990.0));
+        assert_eq!(result.max_quantity_base.round_dp(4), dec!(0.999));
+        assert_eq!(result.min_quantity_base, dec!(0.001));
+        assert_eq!(result.min_quantity_quote, dec!(10));
+        assert_eq!(result.fees, dec!(1));
+        assert_eq!(result.slippage, dec!(0));
+        assert_eq!(result.cost_long, dec!(100));
+        assert_eq!(result.cost_short, dec!(100));
+
     }
 
     #[test]
@@ -271,15 +297,15 @@ mod tests {
         );
 
         assert_eq!(result.entry_price, dec!(9900));
-        assert_eq!(result.liquidation_price, dec!(10395));
-        assert_eq!(result.max_quantity_quote, dec!(9990.0));
-        assert_eq!(result.max_quantity_base.round_dp(4), dec!(1.0091));
+        assert_eq!(result.liquidation_price, dec!(10860.3));
+        assert_eq!(result.max_quantity_base, dec!(1.01010101));
         assert_eq!(result.min_quantity_base, dec!(0.001));
+        assert_eq!(result.max_quantity_quote, dec!(9990.0));
         assert_eq!(result.min_quantity_quote, dec!(9.9));
-        assert_eq!(result.fees, dec!(9.9));
+        assert_eq!(result.fees, dec!(99.99));
         assert_eq!(result.slippage, dec!(0));
         assert_eq!(result.cost_long, dec!(99));
-        assert_eq!(result.cost_short, dec!(99));
+        assert_eq!(result.cost_short, dec!(0));
     }
 
     #[test]
@@ -352,23 +378,23 @@ fn test_market_order_buy_quote() {
         &order_book,
         account_balance.get("USDT").unwrap().clone(),
         "USDT".to_string(),
-        dec!(0.1),
+        dec!(1000),
         None,
         true,
         true,
         false,
     );
 
-    assert_eq!(result.entry_price, dec!(10000));
-    assert_eq!(result.liquidation_price, dec!(9000));
-    assert_eq!(result.max_quantity_base, dec!(1));
-    assert_eq!(result.min_quantity_base, dec!(0.001));
-    assert_eq!(result.max_quantity_quote, dec!(10000));
-    assert_eq!(result.min_quantity_quote, dec!(10));
-    assert_eq!(result.fees, dec!(1));
-    assert_eq!(result.slippage, dec!(0));
-    assert_eq!(result.cost_long, dec!(10));
-    assert_eq!(result.cost_short, dec!(10));
+assert_eq!(result.entry_price, dec!(10000));
+assert_eq!(result.liquidation_price, dec!(9030));
+assert_eq!(result.max_quantity_base, dec!(0.999));
+assert_eq!(result.min_quantity_base, dec!(0.001));
+assert_eq!(result.max_quantity_quote, dec!(9990));
+assert_eq!(result.min_quantity_quote, dec!(10));
+assert_eq!(result.fees, dec!(1));
+assert_eq!(result.slippage, dec!(0));
+assert_eq!(result.cost_long, dec!(100));
+assert_eq!(result.cost_short, dec!(100));
 }
 
 #[test]
