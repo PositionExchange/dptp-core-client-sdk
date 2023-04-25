@@ -1,16 +1,28 @@
+use core::fmt;
 use std::collections::HashMap;
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 use rust_decimal_macros::dec;
-use crate::orderbook::OrderBook;
+use crate::{orderbook::OrderBook, log};
 use serde::{Serialize, Deserialize};
+use crate::clg;
 
 /// Calculate max quantity, min quantity, entry_price, liquidation_price, fees and slippage for a given order
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum OrderType {
     Limit,
     Market,
 }
+
+impl fmt::Debug for OrderType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            OrderType::Limit => write!(f, "Limit"),
+            OrderType::Market => write!(f, "Market"),
+        }
+    }
+}
+
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FuturesOrder {
@@ -24,9 +36,31 @@ pub struct FuturesOrder {
     pub swap_fee: Decimal,
     pub slippage: Decimal,
     pub cost_long: Decimal,
+    pub cost_long_base: Decimal,
     pub cost_short: Decimal,
     pub open_quantity: Decimal,
     pub open_notional: Decimal,
+}
+
+impl FuturesOrder {
+    pub fn empty() -> Self {
+        Self {
+            entry_price: Decimal::ZERO,
+            liquidation_price: Decimal::ZERO,
+            max_quantity_base: Decimal::ZERO,
+            min_quantity_base: Decimal::ZERO,
+            max_quantity_quote: Decimal::ZERO,
+            min_quantity_quote: Decimal::ZERO,
+            fees: Decimal::ZERO,
+            swap_fee: Decimal::ZERO,
+            slippage: Decimal::ZERO,
+            cost_long: Decimal::ZERO,
+            cost_long_base: Decimal::ZERO,
+            cost_short: Decimal::ZERO,
+            open_quantity: Decimal::ZERO,
+            open_notional: Decimal::ZERO,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -41,6 +75,7 @@ pub struct FuturesOrderCalculation {
     pub margin_ratio: Decimal,
     pub taker_fee: Decimal,
     pub maker_fee: Decimal,
+    pub base_token_precision: u32,
 }
 
 pub fn string_to_decimal(s: &str, expect_msg: &str) -> Decimal {
@@ -57,6 +92,7 @@ impl FuturesOrderCalculation {
         margin_ratio: String,
         taker_fee: String,
         maker_fee: String,
+        base_token_precision: u32,
     ) -> Self {
         Self {
             leverage: string_to_decimal(&leverage, "Invalid leverage"),
@@ -67,41 +103,57 @@ impl FuturesOrderCalculation {
             margin_ratio: string_to_decimal(&margin_ratio, "Invalid margin ratio"),
             taker_fee: string_to_decimal(&taker_fee, "Invalid taker fee"),
             maker_fee: string_to_decimal(&maker_fee, "Invalid maker fee"),
+            base_token_precision,
         }
     }
 
+    /// Compute open order details
+    /// If pay_amount = 0, quantity > 0 => use quantity to calculate
+    /// if pay_amount > 0, quantity = 0 => use pay_amount to calculate
+    /// If pay_amount > 0, quantity > 0 => prefer quantity over pay_amount
+    /// If both = 0, invalid
+    /// Note pay_amount should be in USD
     pub fn compute_open_order(
         &self,
         order_type: OrderType,
         order_book: &OrderBook,
         balance: Decimal,
-        pay_token: String,
+        pay_amount: Decimal,
         quantity: Decimal,
         limit_price: Option<Decimal>,
         is_quote: bool,
         is_buy: bool,
         use_percentage: bool,
-    ) -> FuturesOrder {
+    ) -> anyhow::Result<FuturesOrder> {
         assert!(self.leverage != Decimal::ZERO, "Leverage not set. Must init new pare first");
         assert!(self.max_notional != Decimal::ZERO, "Max notional not set. Must init new pare first");
         assert!(!String::is_empty(&self.collateral_long_token), "Long collateral token not set. Must init new pare first");
         assert!(!String::is_empty(&self.collateral_short_token), "Short collateral token not set. Must init new pare first");
+        assert(pay_amount > Decimal::ZERO || quantity > Decimal::ZERO, "Must have positive pay_amount or quantity".to_string()).unwrap();
 
-        println!("order book {:?}", order_book);
+        crate::clg!("order book {:?}", order_book);
 
         let zero = Decimal::ZERO;
         // let balance = self.account_balance.get(&pay_token).unwrap_or(&zero);
         // TODO Convert balance to quote balance
         let quote_balance = balance;
+        let mut quantity = quantity;
+        let mut is_quote = is_quote;
+        if quantity == zero && pay_amount > zero {
+            // todo use pay_amount to calculate the quantity
+            quantity = pay_amount * self.leverage;
+            // should auto be quote
+            is_quote = true;
+        }
 
         // Convert the percentage quantity to an absolute value if necessary
-        let quantity = if use_percentage {
+        quantity = if use_percentage {
             (balance * self.leverage) * quantity
         } else {
             quantity
         };
 
-        println!("calculating {} {} {}", quantity, is_quote, is_buy);
+        clg!("calculating {} {} {}", quantity, is_quote, is_buy);
         let (entry_price, total_base_filled, slippage) = match order_type {
             OrderType::Market => order_book.compute_dry(quantity, is_quote, is_buy),
             OrderType::Limit => {
@@ -109,25 +161,13 @@ impl FuturesOrderCalculation {
                 (limit_price.unwrap(), if is_quote {quantity / limit_price.unwrap()} else {quantity}, dec!(0))
             }
         };
+        let total_base_filled = total_base_filled.round_dp_with_strategy(self.base_token_precision, RoundingStrategy::ToZero);
 
         if entry_price.is_zero() || total_base_filled.is_zero() {
-            println!("Entry price or total base filled is zero entry_price: {}, total_base_filled: {}", entry_price, total_base_filled);
-            return FuturesOrder {
-                entry_price: Decimal::ZERO,
-                liquidation_price: Decimal::ZERO,
-                max_quantity_base: Decimal::ZERO,
-                min_quantity_base: Decimal::ZERO,
-                max_quantity_quote: Decimal::ZERO,
-                min_quantity_quote: Decimal::ZERO,
-                fees: Decimal::ZERO,
-                swap_fee: Decimal::ZERO,
-                slippage: Decimal::ZERO,
-                cost_long: Decimal::ZERO,
-                cost_short: Decimal::ZERO,
-                open_quantity: Decimal::ZERO,
-                open_notional: Decimal::ZERO,
-            
-            };
+            clg!("Entry price or total base filled is zero entry_price: {}, total_base_filled: {}", entry_price, total_base_filled);
+            return Ok(
+                FuturesOrder::empty()
+            );
         }
 
         let open_notional = total_base_filled * entry_price;
@@ -146,7 +186,7 @@ impl FuturesOrderCalculation {
 
         let initial_margin = self.compute_margin(total_base_filled, entry_price);
         let maintenance_margin = initial_margin * self.margin_ratio;
-        println!("initial_margin: {}, maintenance_margin: {}, quantity: {}, total_base_filled: {}", initial_margin, maintenance_margin, quantity, total_base_filled);
+        clg!("initial_margin: {}, maintenance_margin: {}, quantity: {}, total_base_filled: {}", initial_margin, maintenance_margin, quantity, total_base_filled);
         let liquidation_price = match is_buy {
             true => (maintenance_margin - initial_margin + open_notional) / total_base_filled,
             false => (open_notional - maintenance_margin + initial_margin) / total_base_filled,
@@ -168,8 +208,10 @@ impl FuturesOrderCalculation {
 
         let fees = open_fee + swap_fee;
         let cost_long = initial_margin;
+        let cost_long_base = initial_margin/entry_price;
         let cost_short = initial_margin;
 
+        Ok(
         FuturesOrder {
             entry_price,
             liquidation_price,
@@ -181,10 +223,12 @@ impl FuturesOrderCalculation {
             swap_fee,
             slippage,
             cost_long,
+            cost_long_base,
             cost_short,
             open_notional,
             open_quantity: total_base_filled
         }
+        )
     }
 
     pub fn compute_margin(&self, quantity: Decimal, entry_price: Decimal) -> Decimal {
@@ -200,6 +244,13 @@ impl FuturesOrderCalculation {
     }
 }
 
+fn assert(condition: bool, message: String) -> anyhow::Result<()> {
+    if !condition {
+        anyhow::bail!(message)
+    }
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -209,7 +260,7 @@ mod tests {
 
     fn setup_account_balance() -> HashMap<String, Decimal> {
         let mut account_balance = HashMap::new();
-        account_balance.insert("USDT".to_string(), dec!(1000));
+        account_balance.insert("USDT".to_string(), Decimal::new(1000, 0));
         account_balance
     }
 
@@ -248,16 +299,46 @@ mod tests {
     }
 
     #[test]
-    fn test_market_order_buy() {
+    fn should_calculate_fine_from_pay_amount() {
         let order_book = setup_order_book();
-        let futures_order_calculation = setup_futures_order_calculation();
+        let mut futures_order_calculation = setup_futures_order_calculation();
         let account_balance = setup_account_balance();
 
         let result = futures_order_calculation.compute_open_order(
             OrderType::Market,
             &order_book,
             account_balance.get("USDT").unwrap().clone(),
-            "USDT".to_string(),
+            dec!(100),
+            dec!(0),
+            None,
+            false,
+            true,
+            false,
+        );
+        assert_eq!(result.entry_price, dec!(10000));
+        assert_eq!(result.liquidation_price, dec!(9030));
+        assert_eq!(result.max_quantity_quote, dec!(9990.0));
+        assert_eq!(result.max_quantity_base.round_dp(4), dec!(0.999));
+        assert_eq!(result.min_quantity_base, dec!(0.001));
+        assert_eq!(result.min_quantity_quote, dec!(10));
+        assert_eq!(result.fees, dec!(1));
+        assert_eq!(result.slippage, dec!(0));
+        assert_eq!(result.cost_long, dec!(100));
+        assert_eq!(result.cost_short, dec!(100));
+
+    }
+
+    #[test]
+    fn test_market_order_buy() {
+        let order_book = setup_order_book();
+        let mut futures_order_calculation = setup_futures_order_calculation();
+        let account_balance = setup_account_balance();
+
+        let result = futures_order_calculation.compute_open_order(
+            OrderType::Market,
+            &order_book,
+            account_balance.get("USDT").unwrap().clone(),
+            dec!(0),
             dec!(0.1),
             None,
             false,
@@ -275,7 +356,22 @@ mod tests {
         assert_eq!(result.slippage, dec!(0));
         assert_eq!(result.cost_long, dec!(100));
         assert_eq!(result.cost_short, dec!(100));
+        futures_order_calculation.change_leverage(dec!(20));
+        let result = futures_order_calculation.compute_open_order(
+            OrderType::Market,
+            &order_book,
+            account_balance.get("USDT").unwrap().clone(),
+            dec!(0),
+            dec!(0.1),
+            None,
+            false,
+            true,
+            false,
+        );
 
+        assert_eq!(result.cost_long, dec!(50));
+        assert_eq!(result.cost_short, dec!(50));
+        assert_eq!(futures_order_calculation.leverage, dec!(20));
     }
 
     #[test]
@@ -288,7 +384,7 @@ mod tests {
             OrderType::Market,
             &order_book,
             account_balance.get("USDT").unwrap().clone(),
-            "USDT".to_string(),
+            dec!(0),
             dec!(0.1),
             None,
             false,
@@ -318,7 +414,7 @@ mod tests {
             OrderType::Limit,
             &order_book,
             account_balance.get("USDT").unwrap().clone(),
-            "USDT".to_string(),
+            dec!(0),
             dec!(0.1),
             Some(dec!(9500)),
             false,
@@ -347,7 +443,7 @@ fn test_limit_order_sell() {
         OrderType::Limit,
         &order_book,
         account_balance.get("USDT").unwrap().clone(),
-        "USDT".to_string(),
+        dec!(0),
         dec!(0.1),
         Some(dec!(10500)),
         false,
@@ -377,7 +473,7 @@ fn test_market_order_buy_quote() {
         OrderType::Market,
         &order_book,
         account_balance.get("USDT").unwrap().clone(),
-        "USDT".to_string(),
+        dec!(0),
         dec!(1000),
         None,
         true,
@@ -385,16 +481,16 @@ fn test_market_order_buy_quote() {
         false,
     );
 
-assert_eq!(result.entry_price, dec!(10000));
-assert_eq!(result.liquidation_price, dec!(9030));
-assert_eq!(result.max_quantity_base, dec!(0.999));
-assert_eq!(result.min_quantity_base, dec!(0.001));
-assert_eq!(result.max_quantity_quote, dec!(9990));
-assert_eq!(result.min_quantity_quote, dec!(10));
-assert_eq!(result.fees, dec!(1));
-assert_eq!(result.slippage, dec!(0));
-assert_eq!(result.cost_long, dec!(100));
-assert_eq!(result.cost_short, dec!(100));
+    assert_eq!(result.entry_price, dec!(10000));
+    assert_eq!(result.liquidation_price, dec!(9030));
+    assert_eq!(result.max_quantity_base, dec!(0.999));
+    assert_eq!(result.min_quantity_base, dec!(0.001));
+    assert_eq!(result.max_quantity_quote, dec!(9990));
+    assert_eq!(result.min_quantity_quote, dec!(10));
+    assert_eq!(result.fees, dec!(1));
+    assert_eq!(result.slippage, dec!(0));
+    assert_eq!(result.cost_long, dec!(100));
+    assert_eq!(result.cost_short, dec!(100));
 }
 
 #[test]
@@ -407,7 +503,7 @@ fn test_market_order_sell_quote() {
         OrderType::Market,
         &order_book,
         account_balance.get("USDT").unwrap().clone(),
-        "USDT".to_string(),
+        dec!(0),
         dec!(0.1),
         None,
         true,
@@ -437,7 +533,7 @@ fn test_limit_order_buy_quote() {
         OrderType::Limit,
         &order_book,
         account_balance.get("USDT").unwrap().clone(),
-        "USDT".to_string(),
+        dec!(0),
         dec!(0.5),
         Some(dec!(10000)),
         true,
@@ -466,7 +562,7 @@ fn test_limit_order_sell_quote() {
         OrderType::Limit,
         &order_book,
         account_balance.get("USDT").unwrap().clone(),
-        "USDT".to_string(),
+        dec!(0),
         dec!(0.5),
         Some(dec!(10000)),
         true,
