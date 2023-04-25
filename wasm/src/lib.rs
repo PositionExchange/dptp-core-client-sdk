@@ -2,7 +2,7 @@ use serde::{ser::SerializeTuple, Serialize};
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
 use core::orderbook::OrderBook;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::{Arc, Mutex}, cell::RefCell, rc::Rc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use console_error_panic_hook::set_once;
@@ -26,22 +26,26 @@ type PriceLevel = (Decimal, Decimal);
 
 #[wasm_bindgen]
 pub struct OrderBookManager {
-    orderbook: OrderBook,
-    order_manager: order::OrderManager
+    orderbook: Rc<RefCell<OrderBook>>,
+    // order_manager: Arc::<Mutex::<order::OrderManager>>,
+    order_manager: Rc<RefCell<order::OrderManager>>,
 }
 
 #[wasm_bindgen]
 impl OrderBookManager {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
+        log("RUST22:: new");
         Self {
-            orderbook: OrderBook::new(),
-            order_manager: order::OrderManager::new(),
+            orderbook: Rc::new(RefCell::new(OrderBook::new())),
+            // order_manager: Arc::new(Mutex::new(order::OrderManager::new())),
+            order_manager: Rc::new(RefCell::new(order::OrderManager::new())),
         }
     }
 
     #[wasm_bindgen]
-    pub fn initialize_orders(&mut self, asks: Array, bids: Array) {
+    pub fn initialize_orders(&self, asks: Array, bids: Array) {
+        log("RUST22:: initialize_orders");
         let asks: Vec<PriceLevel> = to_price_level_vec(&asks)
             .into_iter()
             .map(|(price, quantity)| (Decimal::from_str_exact(&price).unwrap(), Decimal::from_str_exact(&quantity).unwrap()))
@@ -52,17 +56,20 @@ impl OrderBookManager {
             .map(|(price, quantity)| (Decimal::from_str_exact(&price).unwrap(), Decimal::from_str_exact(&quantity).unwrap()))
             .collect();
 
-        self.orderbook.initialize(asks, bids);
+        self.orderbook.borrow_mut().initialize(asks, bids);
+        log("RUST22:: initialize_orders done");
     }
 
     #[wasm_bindgen]
-    pub fn update_orders(&mut self, is_ask: bool, updates: Array) {
+    pub fn update_orders(&self, is_ask: bool, updates: Array) {
+        log("RUST22:: update orders");
         let updates: Vec<PriceLevel> = to_price_level_vec(&updates)
             .into_iter()
             .map(|(price, quantity)| (Decimal::from_str_exact(&price).unwrap(), Decimal::from_str_exact(&quantity).unwrap()))
             .collect();
 
-        self.orderbook.update_order(is_ask, updates);
+        self.orderbook.borrow_mut().update_order(is_ask, updates);
+        log("RUST22:: update orders done");
     }
 
     
@@ -85,7 +92,7 @@ impl OrderBookManager {
             Decimal::from_str_exact(&fill_amount).map_err(|e| JsValue::from_str(&e.to_string())).unwrap();
 
         let (avg_price, total_base, slippage) =
-            self.orderbook.compute_dry(fill_amount_decimal, fill_by_quote, is_buy);
+            self.orderbook.borrow().compute_dry(fill_amount_decimal, fill_by_quote, is_buy);
 
         // let result = ComputeDryResult {
         //     avg_price: avg_price.to_string(),
@@ -98,7 +105,11 @@ impl OrderBookManager {
 
     #[wasm_bindgen]
     pub fn get_depth(&self) -> Result<JsValue, JsValue> {
-        let (asks, bids) = self.orderbook.get_depth();
+        log("RUST22 RUNNING get_depth");
+        let orderbook = self.orderbook.borrow();
+        log("RUST22 get_depth success before to_value");
+        let (asks, bids) = orderbook.get_depth();
+        log("RUST22 get_depth success get value");
         let asks_js: Vec<(String, String)> = asks
             .into_iter()
             .map(|(price, quantity)| (price.to_string(), quantity.to_string()))
@@ -115,7 +126,7 @@ impl OrderBookManager {
 
     // #[wasm_bindgen]
     // pub fn get_best_ask_bid(&self) -> (Option<String>, Option<String>) {
-    //     let (best_ask, best_bid) = self.orderbook.get_best_ask_bid();
+    //     let (best_ask, best_bid) = self.orderbook.borrow().get_best_ask_bid();
     //     (best_ask.map(|x| x.to_string()), best_bid.map(|x| x.to_string()))
     // }
 
@@ -123,7 +134,7 @@ impl OrderBookManager {
     pub fn group_prices(&self, grouping_size: String) -> Result<JsValue, JsValue> {
         let grouping_size_decimal = Decimal::from_str_exact(&grouping_size).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        let (grouped_asks, grouped_bids) = self.orderbook.group_prices(grouping_size_decimal);
+        let (grouped_asks, grouped_bids) = self.orderbook.borrow().group_prices(grouping_size_decimal);
         
         let asks_js: Vec<_> = grouped_asks
             .into_iter()
@@ -146,13 +157,14 @@ impl OrderBookManager {
     }
 
     #[wasm_bindgen]
-    pub fn update_balance(&mut self, token: String, balance: String) {
-        self.order_manager.update_balance(token, balance);
+    pub fn update_balance(&self, token: String, balance: String) {
+        log("RUST22:: update balance");
+        self.order_manager.borrow_mut().update_balance(token, balance);
     }
 
     #[wasm_bindgen]
     pub fn new_pair_order_compute(
-        &mut self,
+        &self,
         pair_symbol: String,
         collateral_long_token: String,
         collateral_short_token: String,
@@ -161,10 +173,15 @@ impl OrderBookManager {
         min_quantity_base: String,
         margin_ratio: String,
         taker_fee: String,
-        maker_fee: String
+        maker_fee: String,
+        base_token_precision: u32,
 
     ) {
-        self.order_manager.new_pair_order_compute(pair_symbol, collateral_long_token, collateral_short_token, leverage, max_notional, min_quantity_base, margin_ratio, taker_fee, maker_fee)
+        log("RUST22:: update new pair");
+        //.lock().unwrap();
+        let mut ob = self.order_manager.borrow_mut();
+        log("RUST22:: update new pair successful mut");
+        ob.new_pair_order_compute(pair_symbol, collateral_long_token, collateral_short_token, leverage, max_notional, min_quantity_base, margin_ratio, taker_fee, maker_fee, base_token_precision)
     }
 
     /// Returns an object containing trading-related information.
@@ -199,14 +216,34 @@ impl OrderBookManager {
     pub fn compute_open_order(
         &self,
         pay_token: String,
+        pay_amount: String,
         limit_price: Option<String>,
         quantity: String,
         is_quote: bool,
         is_buy: bool,
         use_percentage: bool,
-    ) -> JsValue {
+    ) -> Result<JsValue, String> {
         log("Rust >> compute order");
-        self.order_manager.compute_open_order(&self.orderbook, pay_token, limit_price, quantity, is_quote, is_buy, use_percentage)
+        self.order_manager.borrow().compute_open_order(
+            &self.orderbook.borrow(),
+            pay_token,
+            pay_amount,
+            limit_price,
+            quantity,
+            is_quote,
+            is_buy,
+            use_percentage
+        )
+    }
+
+    #[wasm_bindgen]
+    pub fn change_leverage(
+        &self,
+        new_leverage: String
+    ) {
+        self.order_manager.borrow_mut().change_leverage(
+            new_leverage
+        )
     }
 
 }
