@@ -129,6 +129,7 @@ impl FuturesOrderCalculation {
         assert!(self.max_notional != Decimal::ZERO, "Max notional not set. Must init new pare first");
         assert!(!String::is_empty(&self.collateral_long_token), "Long collateral token not set. Must init new pare first");
         assert!(!String::is_empty(&self.collateral_short_token), "Short collateral token not set. Must init new pare first");
+        crate::clg!("pay amount {:?}, quantity {}", pay_amount, quantity);
         assert(pay_amount > Decimal::ZERO || quantity > Decimal::ZERO, "Must have positive pay_amount or quantity".to_string()).unwrap();
 
         crate::clg!("order book {:?}", order_book);
@@ -200,11 +201,13 @@ impl FuturesOrderCalculation {
             self.max_notional / entry_price
         };
 
+        let max_quantity_base = max_quantity_base.round_dp_with_strategy(self.base_token_precision, RoundingStrategy::ToZero);
+
         // Min = min_quantity
         let min_quantity_base = self.min_quantity_base;
 
-        let max_quantity_quote = max_quantity_base * entry_price;
-        let min_quantity_quote = min_quantity_base * entry_price;
+        let max_quantity_quote = self.max_notional;
+        let min_quantity_quote = (min_quantity_base * entry_price).round_dp_with_strategy(self.base_token_precision, RoundingStrategy::ToZero);
 
         let fees = open_fee + swap_fee;
         let cost_long = initial_margin;
@@ -239,8 +242,9 @@ impl FuturesOrderCalculation {
     //     self.account_balance.insert(self.collateral_long_token.clone(), balance);
     // }
 
-    pub fn change_leverage(&mut self, leverage: Decimal) {
+    pub fn change_leverage(&mut self, leverage: Decimal, max_notional: String) {
         self.leverage = leverage;
+        self.max_notional = string_to_decimal(&max_notional, "Invalid max notional");
     }
 }
 
