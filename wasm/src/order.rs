@@ -1,5 +1,5 @@
 use core::{compute::order::{self, FuturesOrder}, orderbook::OrderBook};
-use std::{collections::HashMap, sync::{Arc, Mutex}, future::Future};
+use std::{collections::HashMap, sync::{Arc, Mutex}, future::Future, cell::RefCell, rc::Rc};
 
 use rust_decimal::Decimal;
 use wasm_bindgen::prelude::*;
@@ -10,7 +10,7 @@ extern "C" {
     fn log(s: &str);
 }
 
-type OrderCalculatationLockable = order::FuturesOrderCalculation;//Arc<Mutex<order::FuturesOrderCalculation>>;
+type OrderCalculatationLockable = Rc<RefCell<order::FuturesOrderCalculation>>;//Arc<Mutex<order::FuturesOrderCalculation>>;
 
 #[derive(Clone, Debug)]
 pub struct OrderManager {
@@ -43,8 +43,8 @@ impl OrderManager {
         log(format!("RUST:: new pair {}", pair_symbol.clone()).as_str());
         self.pair_order_compute.insert(
             pair_symbol.clone(),
-            // Arc::new(
-            // Mutex::new(
+            Rc::new(
+            RefCell::new(
                 order::FuturesOrderCalculation::new(
                     collateral_long_token,
                     collateral_short_token,
@@ -56,7 +56,7 @@ impl OrderManager {
                     maker_fee,
                     base_token_precision,
                 )
-            // ))
+            ))
         );
         log(format!("RUST:: new pair {} DONE 1", pair_symbol.clone()).as_str());
         self.active_pair_symbol = pair_symbol.clone();
@@ -78,6 +78,7 @@ impl OrderManager {
         is_buy: bool,
         use_percentage: bool,
     ) -> Result<JsValue, String> {
+
         log(format!("RUST:: Compute open order: {:?}, is_quote {}, is_buy {}", quantity, is_quote, is_buy).as_str());
         let order_type: order::OrderType;
         let mut price: Option<Decimal> = None;
@@ -93,7 +94,7 @@ impl OrderManager {
             },
         }
         log(format!("RUST:: order type: {}", price.unwrap_or_else(||Decimal::ZERO)).as_str());
-        let result = self.get_active_order_compute().compute_open_order(
+        let result = self.get_active_order_compute().borrow_mut().compute_open_order(
             order_type,
             orderbook,
             *self.user_balance.get(&pay_token).clone().unwrap_or_else(|| &Decimal::ZERO),
@@ -118,17 +119,19 @@ impl OrderManager {
 
     pub fn change_leverage(
         &self,
-        new_leverage: String
+        new_leverage: String,
+        max_notional: String,
     ) {
-        log(format!("change leverage to {}", new_leverage).as_str());
-        self.get_active_order_compute().change_leverage(Decimal::from_str_exact(&new_leverage).unwrap());
-        let leverage_after = self.get_active_order_compute().leverage;
+        log(format!("change leverage to {}, max notional {}", new_leverage, max_notional).as_str());
+        self.get_active_order_compute().borrow_mut()
+            .change_leverage(Decimal::from_str_exact(&new_leverage).unwrap(), max_notional);
+        let leverage_after = self.get_active_order_compute().borrow().leverage;
         log(format!("change leverage to {} after", leverage_after).as_str());
     }
 
     pub fn get_active_order_compute(&self) -> OrderCalculatationLockable {
         log(format!("RUST:: active pair {}", self.active_pair_symbol.clone()).as_str());
-        return self.pair_order_compute.clone().get(&self.active_pair_symbol.clone()).expect("Not initialized. Make sure you have set active pair, and it's configuration.").clone();
+        return self.pair_order_compute.get(&self.active_pair_symbol.clone()).expect("Not initialized. Make sure you have set active pair, and it's configuration.").clone();
     }
 }
 
