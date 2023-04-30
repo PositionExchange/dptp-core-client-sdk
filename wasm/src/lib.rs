@@ -239,11 +239,18 @@ impl OrderBookManager {
     #[wasm_bindgen]
     pub fn change_leverage(
         &self,
-        new_leverage: String
+        new_leverage: String,
+        max_notional: String
     ) {
         self.order_manager.borrow_mut().change_leverage(
-            new_leverage
+            new_leverage,
+            max_notional
         )
+    }
+
+    #[wasm_bindgen]
+    pub fn get_active_pair_symbol(&self) -> String {
+        self.order_manager.borrow().active_pair_symbol.clone()
     }
 
 }
@@ -261,9 +268,13 @@ fn to_price_level_vec(arr: &Array) -> Vec<(String, String)> {
     let mut result = Vec::new();
     for i in 0..arr.length() {
         let tuple = arr.get(i);
+         
         if let Some(tuple) = tuple.dyn_into::<Array>().ok() {
-            let price = tuple.get(0).as_string().unwrap();
-            let quantity = tuple.get(1).as_string().unwrap();
+            if tuple.length() == 0 {
+                continue;
+            }
+            let price = tuple.get(0).as_string().expect("[to price level vec] invalid price");
+            let quantity = tuple.get(1).as_string().expect("[to price level vec] invalid quantity");
             result.push((price, quantity));
         }
     }
