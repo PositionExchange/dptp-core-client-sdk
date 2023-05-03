@@ -35,7 +35,6 @@ pub struct OrderBookManager {
 impl OrderBookManager {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        log("RUST22:: new");
         Self {
             orderbook: Rc::new(RefCell::new(OrderBook::new())),
             // order_manager: Arc::new(Mutex::new(order::OrderManager::new())),
@@ -45,7 +44,6 @@ impl OrderBookManager {
 
     #[wasm_bindgen]
     pub fn initialize_orders(&self, asks: Array, bids: Array) {
-        log("RUST22:: initialize_orders");
         let asks: Vec<PriceLevel> = to_price_level_vec(&asks)
             .into_iter()
             .map(|(price, quantity)| (Decimal::from_str_exact(&price).unwrap(), Decimal::from_str_exact(&quantity).unwrap()))
@@ -57,19 +55,16 @@ impl OrderBookManager {
             .collect();
 
         self.orderbook.borrow_mut().initialize(asks, bids);
-        log("RUST22:: initialize_orders done");
     }
 
     #[wasm_bindgen]
     pub fn update_orders(&self, is_ask: bool, updates: Array) {
-        log("RUST22:: update orders");
         let updates: Vec<PriceLevel> = to_price_level_vec(&updates)
             .into_iter()
             .map(|(price, quantity)| (Decimal::from_str_exact(&price).unwrap(), Decimal::from_str_exact(&quantity).unwrap()))
             .collect();
 
         self.orderbook.borrow_mut().update_order(is_ask, updates);
-        log("RUST22:: update orders done");
     }
 
     
@@ -105,11 +100,8 @@ impl OrderBookManager {
 
     #[wasm_bindgen]
     pub fn get_depth(&self) -> Result<JsValue, JsValue> {
-        log("RUST22 RUNNING get_depth");
         let orderbook = self.orderbook.borrow();
-        log("RUST22 get_depth success before to_value");
         let (asks, bids) = orderbook.get_depth();
-        log("RUST22 get_depth success get value");
         let asks_js: Vec<(String, String)> = asks
             .into_iter()
             .map(|(price, quantity)| (price.to_string(), quantity.to_string()))
@@ -158,7 +150,6 @@ impl OrderBookManager {
 
     #[wasm_bindgen]
     pub fn update_balance(&self, token: String, balance: String) {
-        log("RUST22:: update balance");
         self.order_manager.borrow_mut().update_balance(token, balance);
     }
 
@@ -177,10 +168,8 @@ impl OrderBookManager {
         base_token_precision: u32,
 
     ) {
-        log("RUST22:: update new pair");
         //.lock().unwrap();
         let mut ob = self.order_manager.borrow_mut();
-        log("RUST22:: update new pair successful mut");
         ob.new_pair_order_compute(pair_symbol, collateral_long_token, collateral_short_token, leverage, max_notional, min_quantity_base, margin_ratio, taker_fee, maker_fee, base_token_precision)
     }
 
@@ -223,7 +212,6 @@ impl OrderBookManager {
         is_buy: bool,
         use_percentage: bool,
     ) -> Result<JsValue, String> {
-        log("Rust >> compute order");
         self.order_manager.borrow().compute_open_order(
             &self.orderbook.borrow(),
             pay_token,

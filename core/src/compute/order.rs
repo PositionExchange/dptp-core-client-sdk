@@ -61,6 +61,24 @@ impl FuturesOrder {
             open_notional: Decimal::ZERO,
         }
     }
+    pub fn empty2(entry_price: Decimal) -> Self {
+        Self {
+            entry_price,
+            liquidation_price: Decimal::ZERO,
+            max_quantity_base: Decimal::ZERO,
+            min_quantity_base: Decimal::ZERO,
+            max_quantity_quote: Decimal::ZERO,
+            min_quantity_quote: Decimal::ZERO,
+            fees: Decimal::ZERO,
+            swap_fee: Decimal::ZERO,
+            slippage: Decimal::ZERO,
+            cost_long: Decimal::ZERO,
+            cost_long_base: Decimal::ZERO,
+            cost_short: Decimal::ZERO,
+            open_quantity: Decimal::ZERO,
+            open_notional: Decimal::ZERO,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -132,8 +150,6 @@ impl FuturesOrderCalculation {
         crate::clg!("pay amount {:?}, quantity {}", pay_amount, quantity);
         assert(pay_amount > Decimal::ZERO || quantity > Decimal::ZERO, "Must have positive pay_amount or quantity".to_string()).unwrap();
 
-        crate::clg!("order book {:?}", order_book);
-
         let zero = Decimal::ZERO;
         // let balance = self.account_balance.get(&pay_token).unwrap_or(&zero);
         // TODO Convert balance to quote balance
@@ -154,7 +170,6 @@ impl FuturesOrderCalculation {
             quantity
         };
 
-        clg!("calculating {} {} {}", quantity, is_quote, is_buy);
         let (entry_price, total_base_filled, slippage) = match order_type {
             OrderType::Market => order_book.compute_dry(quantity, is_quote, is_buy),
             OrderType::Limit => {
@@ -167,7 +182,7 @@ impl FuturesOrderCalculation {
         if entry_price.is_zero() || total_base_filled.is_zero() {
             clg!("Entry price or total base filled is zero entry_price: {}, total_base_filled: {}", entry_price, total_base_filled);
             return Ok(
-                FuturesOrder::empty()
+                FuturesOrder::empty2(entry_price)
             );
         }
 
