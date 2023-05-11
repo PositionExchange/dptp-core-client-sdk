@@ -192,6 +192,7 @@ impl FuturesOrderCalculation {
             OrderType::Limit => self.maker_fee,
             OrderType::Market => self.taker_fee,
         };
+        clg!("open_fees_rate: {}, ordertype isLimit {}", open_fees_rate, matches!(order_type, OrderType::Limit));
 
         let open_fee = open_fees_rate * open_notional;
 
