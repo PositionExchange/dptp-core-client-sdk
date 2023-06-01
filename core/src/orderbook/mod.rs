@@ -1,5 +1,6 @@
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use serde::Serialize;
 use std::collections::BTreeMap;
 
 // use wasm_bindgen::prelude::*;
@@ -27,7 +28,7 @@ type PriceLevel = (Decimal, Decimal);
 //     }
 // }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub struct OrderBook {
     pub asks: BTreeMap<Decimal, Decimal>,
     pub bids: BTreeMap<Decimal, Decimal>,

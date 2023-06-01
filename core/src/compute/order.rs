@@ -81,7 +81,7 @@ impl FuturesOrder {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct FuturesOrderCalculation {
     pub leverage: Decimal,
     // configuration
@@ -259,6 +259,7 @@ impl FuturesOrderCalculation {
 
     pub fn change_leverage(&mut self, leverage: Decimal, max_notional: String) {
         self.leverage = leverage;
+        println!("Selft leverage {}", self.leverage);
         self.max_notional = string_to_decimal(&max_notional, "Invalid max notional");
     }
 }

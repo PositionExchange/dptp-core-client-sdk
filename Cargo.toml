@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "core",
-    # "flutter",
+    "flutter_bridge/rust",
     "wasm",
     "external"
 ]

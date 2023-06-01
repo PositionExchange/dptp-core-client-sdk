@@ -5,6 +5,7 @@
 .DS_Store
 *.bak
 *.tmp
+.idea/
 
 # Rust
 /target
@@ -15,6 +16,7 @@ Cargo.lock
 # WebAssembly
 wasm/pkg/
 wasm/target/
+wasm/*.xcodeproj
 
 # Flutter and Dart
 flutter/.packages
@@ -22,13 +24,8 @@ flutter/.flutter-plugins
 flutter/.pub/
 flutter/.pub-cache/
 flutter/build/
-flutter/ios/Pods/
-flutter/ios/Runner.xcworkspace/xcuserdata/
-flutter/ios/Runner.xcworkspace/xcshareddata/
-flutter/ios/Runner.xcodeproj/xcuserdata/
-flutter/ios/Runner.xcodeproj/project.xcworkspace/
-flutter/ios/Runner.xcodeproj/project.xcworkspace/xcshareddata/
-flutter/ios/Runner.xcodeproj/xcshareddata/
+flutter/lib/ios/**.a
+#flutter/lib/android/
 *.jks
 *.keystore
 /keys.properties
@@ -37,10 +34,3 @@ flutter/ios/Runner.xcodeproj/xcshareddata/
 node_modules/
 npm-debug.log
 yarn-error.log
-
-
-# Added by cargo
-#
-# already existing elements were commented out
-
-#/target
